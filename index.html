@@ -1213,8 +1213,8 @@ function addUser(text,atts){var d=add('u','');d._text=text;d._atts=atts||[];
   return d}
 /* ---- Bring Your Own Gemini API key (stored locally per NovaAI email) ---- */
 var GEMINI_MODEL_DEFAULT='gemini-3.8-flash';
- var GEMINI_MODEL_FALLBACK='gemini-3.5-flash-lite';
- function geminiPreferredModel(){var v='';try{v=localStorage.getItem('nova.gemini.model')||''}catch(e){}if(!v||v==='gemini-2.5-flash'||v==='gemini-3.5-flash-lite'){v=GEMINI_MODEL_DEFAULT;try{localStorage.setItem('nova.gemini.model',v)}catch(e){}}return v}
+ var GEMINI_MODEL_FALLBACK='gemini-3.5-flash';
+ function geminiPreferredModel(){var v='';try{v=localStorage.getItem('nova.gemini.model')||''}catch(e){}if(!v||v==='gemini-2.5-flash'||v==='gemini-3.5-flash'){v=GEMINI_MODEL_DEFAULT;try{localStorage.setItem('nova.gemini.model',v)}catch(e){}}return v}
 function geminiKeyStore(){try{var o=JSON.parse(localStorage.getItem('nova.gemini.keys')||'{}');return o&&typeof o==='object'&&!Array.isArray(o)?o:{}}catch(e){return {}}}
 function geminiKey(){return signedIn?String(geminiKeyStore()[(userEmail||'').toLowerCase()]||''):''}
 function saveGeminiKey(k){var o=geminiKeyStore(),id=(userEmail||'').toLowerCase();if(!id)return false;if(k)o[id]=k;else delete o[id];try{localStorage.setItem('nova.gemini.keys',JSON.stringify(o));return true}catch(e){return false}}
