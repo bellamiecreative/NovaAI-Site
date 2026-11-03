@@ -1036,7 +1036,12 @@ var LOGO='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGAAAABpCAYAAADFlybwAABH
 var vibT=null;
 function vibStart(){try{if(!navigator.vibrate||vibT)return;navigator.vibrate(900);vibT=setInterval(function(){try{navigator.vibrate(900)}catch(e){}},950)}catch(e){}}
 function vibStop(){try{if(vibT){clearInterval(vibT);vibT=null}if(navigator.vibrate)navigator.vibrate(0)}catch(e){}}
-var SYS="You are NovaAI, a friendly, concise assistant inside a mobile chat app. Reply in plain text (no markdown headings), keep answers short and easy to read on a phone. Reply in the language the user writes in.\n\n";
+var SYS="You are NovaAI, an intelligent, thoughtful and practical assistant. Understand the user's real goal, ask one focused clarifying question only when necessary, reason carefully, verify uncertain claims, and never invent facts or sources. Give useful step-by-step help and concrete examples. Reply in the language the user writes in, especially natural Kurdish Sorani when the user writes Kurdish. Format answers clearly for a phone; use concise headings and bullets when helpful. Be creative when asked to write, design, brainstorm or code.\n\n";
+function novaMemoryStore(){try{var o=JSON.parse(localStorage.getItem('nova.memory')||'{}');return o&&typeof o==='object'&&!Array.isArray(o)?o:{}}catch(e){return {}}}
+function novaMemoryKey(){return (userEmail||'').toLowerCase()}
+function novaMemoryList(){var o=novaMemoryStore(),a=o[novaMemoryKey()];return Array.isArray(a)?a:[]}
+function memoryPrompt(){var a=novaMemoryList();return a.length?'\nUser-approved notes to remember across chats (use only when relevant):\n'+a.slice(-20).map(function(x,i){return (i+1)+'. '+String(x).slice(0,300)}).join('\n')+'\nDo not infer or store sensitive personal details.\n':'\nNo saved memory notes. Do not claim to remember details not present in this chat.\n'}
+function memoryCommand(text){var v=String(text||'').trim(),m=/^\\/remember\\s+(.+)$/i.exec(v);if(m){if(!signedIn||!novaMemoryKey())return 'Please sign in before saving memory notes.';var o=novaMemoryStore(),a=novaMemoryList();a.push(m[1].slice(0,300));o[novaMemoryKey()]=a.slice(-20);try{localStorage.setItem('nova.memory',JSON.stringify(o));return 'Saved to NovaAI memory on this device.'}catch(e){return 'Could not save memory on this device.'}}if(/^\\/memory$/i.test(v))return signedIn?'Saved notes: '+(novaMemoryList().length?novaMemoryList().map(function(x,i){return (i+1)+'. '+x}).join(' | '):'No notes yet.'):'Sign in to use saved memory.';if(/^\\/forget-memory$/i.test(v)){var z=novaMemoryStore();delete z[novaMemoryKey()];try{localStorage.setItem('nova.memory',JSON.stringify(z));return 'Saved memory notes cleared from this device.'}catch(e){return 'Could not clear memory.'}}return null}
 
 function closeAll(){var wasOpen=drawer.classList.contains('on');drawer.classList.remove('on');scrim.classList.remove('on','clear');pop.classList.remove('on');modal.classList.remove('on');authLock(false);drawer.inert=true;appEl.classList.remove('menu-open');$('shell').inert=false;hideBub();closeMore();if(wasOpen)$('menuBtn').focus({preventScroll:true})}
 function add(cls,text){var d=document.createElement('div');d.className='msg '+cls;d.dir='auto';d.textContent=text;chat.appendChild(d);chat.scrollTop=chat.scrollHeight;return d}
@@ -1220,15 +1225,18 @@ function geminiKey(){return signedIn?String(geminiKeyStore()[(userEmail||'').toL
 function saveGeminiKey(k){var o=geminiKeyStore(),id=(userEmail||'').toLowerCase();if(!id)return false;if(k)o[id]=k;else delete o[id];try{localStorage.setItem('nova.gemini.keys',JSON.stringify(o));return true}catch(e){return false}}
 function geminiModel(){var v=$('apiModelInput')&&$('apiModelInput').value.trim();return /^[a-zA-Z0-9._-]{2,100}$/.test(v||'')?v:GEMINI_MODEL_DEFAULT}
 function fileDataUrl(file){return new Promise(function(resolve,reject){var r=new FileReader();r.onload=function(){resolve(String(r.result||''))};r.onerror=reject;r.readAsDataURL(file)})}
-async function geminiRequest(key,model,contents,systemText){
-  var url='https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(model)+':generateContent';
-  var response;try{response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key},body:JSON.stringify({systemInstruction:{parts:[{text:systemText||SYS+personaText()}]},contents:contents,generationConfig:{temperature:0.7}})})}catch(e){throw {code:'network'}}
-  var data={};try{data=await response.json()}catch(e){}
-  if(!response.ok){var msg=(data&&data.error&&data.error.message)||'Google returned HTTP '+response.status;if(response.status===429||/quota|rate.?limit|resource exhausted/i.test(msg))throw {code:'quota',message:msg,status:response.status};if(response.status===400||response.status===401||response.status===403)throw {code:'invalid_key',message:msg,status:response.status};if(response.status===404)throw {code:'model_not_found',message:msg,status:response.status};throw {code:'generic',message:msg,status:response.status}}
-  var parts=data&&data.candidates&&data.candidates[0]&&data.candidates[0].content&&data.candidates[0].content.parts||[];
-  var answer=parts.map(function(p){return p.text||''}).join('').trim();if(!answer)throw {code:'generic'};return answer
+async function geminiRequest(key,model,contents,systemText,onChunk){
+  var url='https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(model)+':streamGenerateContent?alt=sse';
+  var response;try{response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key},body:JSON.stringify({systemInstruction:{parts:[{text:systemText||SYS+personaText()+memoryPrompt()}]},contents:contents,generationConfig:{temperature:0.65}})})}catch(e){throw {code:'network'}}
+  if(!response.ok){var bad={};try{bad=await response.json()}catch(e){}var msg=(bad&&bad.error&&bad.error.message)||'Google returned HTTP '+response.status;if(response.status===429||/quota|rate.?limit|resource exhausted/i.test(msg))throw {code:'quota',message:msg,status:response.status};if(response.status===400||response.status===401||response.status===403)throw {code:'invalid_key',message:msg,status:response.status};if(response.status===404)throw {code:'model_not_found',message:msg,status:response.status};throw {code:'generic',message:msg,status:response.status}}
+  var answer='',reader=response.body&&response.body.getReader?response.body.getReader():null;
+  if(!reader){var j=await response.json(),pp=j&&j.candidates&&j.candidates[0]&&j.candidates[0].content&&j.candidates[0].content.parts||[];answer=pp.map(function(p){return p.text||''}).join('');if(onChunk&&answer)onChunk(answer);return answer.trim()}
+  var decoder=new TextDecoder(),buffer='';
+  try{while(true){var chunk=await reader.read();if(chunk.done)break;buffer+=decoder.decode(chunk.value,{stream:true});var lines=buffer.split(/\r?\n/);buffer=lines.pop()||'';for(var li=0;li<lines.length;li++){var line=lines[li].trim();if(line.indexOf('data:')!==0)continue;var raw=line.slice(5).trim();if(!raw||raw==='[DONE]')continue;var obj;try{obj=JSON.parse(raw)}catch(e){continue}if(obj.error){var em=obj.error.message||'Gemini stream error';throw {code:'generic',message:em,partial:!!answer}}var ps=obj&&obj.candidates&&obj.candidates[0]&&obj.candidates[0].content&&obj.candidates[0].content.parts||[];var add=ps.map(function(p){return p.text||''}).join('');if(add){answer+=add;if(onChunk)onChunk(answer)}}}}
+  catch(e){try{reader.cancel()}catch(x){}if(e&&e.code)throw e;throw {code:'network',partial:!!answer}}
+  if(!answer.trim())throw {code:'generic'};return answer.trim()
 }
-async function geminiRequestWithFallback(key,model,contents,systemText){try{return {answer:await geminiRequest(key,model,contents,systemText),model:model,fallback:false}}catch(e){var retry=e&&(e.code==='quota'||e.code==='model_not_found'||e.status===500||e.status===503);if(!retry||model===GEMINI_MODEL_FALLBACK)throw e;return {answer:await geminiRequest(key,GEMINI_MODEL_FALLBACK,contents,systemText),model:GEMINI_MODEL_FALLBACK,fallback:true}}}
+async function geminiRequestWithFallback(key,model,contents,systemText,onChunk){var last;for(var attempt=0;attempt<3;attempt++){try{return {answer:await geminiRequest(key,model,contents,systemText,onChunk),model:model,fallback:false}}catch(e){last=e;if(e&&e.partial)throw e;if(!(e&&(e.code==='quota'||e.status===500||e.status===503))||attempt===2)break;await new Promise(function(r){setTimeout(r,700+attempt*900)})}}var retry=last&&(last.code==='quota'||last.code==='model_not_found'||last.status===500||last.status===503);if(!retry||model===GEMINI_MODEL_FALLBACK)throw last;return {answer:await geminiRequest(key,GEMINI_MODEL_FALLBACK,contents,systemText,onChunk),model:GEMINI_MODEL_FALLBACK,fallback:true}}
  async function geminiTest(key,model){return geminiRequestWithFallback(key,model,[{role:'user',parts:[{text:'Reply with the single word OK.'}]}],'You are checking whether this Gemini API connection works. Reply briefly.')}
 function renderApiPage(){var k=geminiKey(),inpK=$('apiKeyInput');if(!inpK)return;$('apiLead').textContent=t('api_lead');$('apiStep1').textContent=t('api_step1');$('apiStep2').textContent=t('api_step2');$('apiGetKey').textContent=t('api_get');$('apiKeyLabel').textContent=t('api_key');$('apiModelLabel').textContent=t('api_model');$('apiWarning').textContent=t('api_warning');$('apiActivate').textContent=t('api_activate');$('apiRemove').textContent=t('api_remove');$('t-api').textContent=t('api_title');$('rApiL').textContent=t('api_title');inpK.value='';inpK.placeholder=k?'••••••••••••••••  (saved on this device)':t('api_placeholder');$('apiModelInput').value=geminiPreferredModel();$('apiStatus').textContent=k?t('api_connected'):t('api_not_connected');$('rApiStatus').textContent=k?t('api_connected_short'):t('api_disconnected_short');$('apiRemove').hidden=!k}
 async function activateGemini(){var key=$('apiKeyInput').value.trim()||geminiKey(),model=geminiModel();if(!key){$('apiStatus').textContent=t('api_invalid');return}if(!/^[a-zA-Z0-9._-]{2,100}$/.test(model)){ $('apiStatus').textContent=t('api_invalid');return }$('apiActivate').disabled=true;$('apiStatus').textContent='Connecting to Google Gemini…';try{var testResult=await geminiTest(key,model);if(!saveGeminiKey(key))throw {code:'generic'};try{localStorage.setItem('nova.gemini.model',model)}catch(e){}$('apiKeyInput').value='';$('apiStatus').textContent=t('api_connected')+' '+t('api_test_ok')+(testResult.fallback?' (Primary busy; fallback '+GEMINI_MODEL_FALLBACK+' is ready.)':'');$('apiRemove').hidden=false;$('rApiStatus').textContent=t('api_connected_short');sync();toast(t('api_test_ok'))}catch(e){var base=e.code==='quota'?t('api_quota'):e.code==='network'?t('api_network'):e.code==='invalid_key'?t('api_invalid'):e.code==='model_not_found'?'Model not found (HTTP 404). Check the exact model name.':t('api_generic');var detail=e&&e.message?String(e.message).replace(/[\\r\\n]+/g,' ').slice(0,180):'';$('apiStatus').textContent=base+(detail?' — '+detail:'')}finally{$('apiActivate').disabled=false}}
@@ -1239,6 +1247,7 @@ $('apiKeyInput').addEventListener('keydown',function(e){if(e.key==='Enter'){e.pr
 
 async function send(text,opts){opts=opts||{};
   var fromBox=!text&&!opts.edit;text=(text||(opts.edit?'':inp.value)).trim();
+  if(!opts.edit&&text){var mc=memoryCommand(text);if(mc){add('a',mc);if(fromBox)inp.value='';sync();return}}
   var sendAtts=opts.edit?(opts.atts||[]):(fromBox?att.slice():[]);
   if(busy||sendingNow)return;
   var hasMedia=sendAtts.some(function(a){return a.kind!=='gen'}),isGen=sendAtts.some(function(a){return a.kind==='gen'});
@@ -1260,7 +1269,10 @@ async function send(text,opts){opts=opts||{};
   if(fromBox&&sendAtts.length){att=att.filter(function(a){return sendAtts.indexOf(a)<0});renderAtts()}
   if(!opts.edit)inp.value='';sync();show(true);var uEl=addUser(text,shown);if(ec)finishEdit(ec);
   var ttl=text||(sendImgs.length?t('title_img'):(fileTxt?t('title_file'):t('pop_gen')));
-  turns.push({role:'user',el:uEl,content:text,title:ttl,atts:shown,api:(fileTxt?fileTxt+(text?'\n\n':''):'')+text});
+  var apiText=(fileTxt?fileTxt+(text?'\n\n':''):'')+text,studioSystem='';
+  if(/^\\/studio\\s+/i.test(text)){apiText=apiText.replace(/^\\/studio\\s+/i,'');studioSystem=' You are now in Creative Studio mode: produce polished, original creative work, offer practical variations, and follow the requested format.'}
+  if(/^\\/image-prompt\\s+/i.test(text)){apiText='Create a detailed image-generation prompt from this brief. Specify subject, composition, lighting, visual style, color palette, camera/viewpoint, background and aspect ratio. Do not claim that an image was generated. Brief: '+apiText.replace(/^\\/image-prompt\\s+/i,'');studioSystem=' Focus on high-quality visual art direction.'}
+  turns.push({role:'user',el:uEl,content:text,title:ttl,atts:shown,api:apiText,studioSystem:studioSystem});
   var myTurns=turns,myChat;trackChat();myChat=activeChat;
   if(!opts.edit)sendAtts.forEach(function(a){if((a.kind==='img'||a.kind==='file')&&!a.kept)libSave(a,'sent')});
   if(isGen){var gm=add('a','');gm.textContent=t('gen_na');myTurns.push({role:'assistant',content:t('gen_na'),note:true});updateHeader(true);return}
@@ -1278,11 +1290,12 @@ async function send(text,opts){opts=opts||{};
       var m=myTurns[mi],txt=(m.api!=null?m.api:m.content)||'';
       if(res&&mi===lastI)txt=ctxBlock(res)+'\n\nQuestion: '+txt;
       if(mi===0&&m.role==='user')txt=txt;
+      if(mi===lastI&&m.studioSystem)txt=txt+'\\n\\n'+m.studioSystem;
       var parts=[{text:String(txt)}];
       if(mi===lastI&&m.role==='user'&&sendImgs.length){for(var ii=0;ii<Math.min(2,sendImgs.length);ii++){var du=await fileDataUrl(sendImgs[ii]),mm=String(sendImgs[ii].type||'image/jpeg');parts.push({inlineData:{mimeType:mm,data:du.split(',')[1]||''}})}}
       contents.push({role:m.role==='assistant'?'model':'user',parts:parts});
     }
-    vibStart();var answerResult=await geminiRequestWithFallback(geminiKey(),geminiPreferredModel(),contents,SYS+personaText());var answer=answerResult.answer;
+    vibStart();var answerResult=await geminiRequestWithFallback(geminiKey(),geminiPreferredModel(),contents,SYS+personaText()+memoryPrompt(),function(partial){tx.textContent=partial;lg.remove();chat.scrollTop=chat.scrollHeight});var answer=answerResult.answer;
     lg.remove();vibStop();tx.textContent=answer;var aTurn={role:'assistant',content:answer,sources:res};myTurns.push(aTurn);renderSources(out,res);aTurn.el=out;if(signedIn)addActions(out,aTurn);updateHeader(true);
 
   }catch(e){
