@@ -1247,7 +1247,7 @@ $('apiKeyInput').addEventListener('keydown',function(e){if(e.key==='Enter'){e.pr
 
 async function send(text,opts){opts=opts||{};
   var fromBox=!text&&!opts.edit;text=(text||(opts.edit?'':inp.value)).trim();
-  if(!opts.edit&&text){var mc=memoryCommand(text);if(mc){add('a',mc);if(fromBox)inp.value='';sync();return}}
+  if(!opts.edit&&text){var mc=memoryCommand(text);if(mc){show(true);add('a',mc);if(fromBox)inp.value='';sync();return}}
   var sendAtts=opts.edit?(opts.atts||[]):(fromBox?att.slice():[]);
   if(busy||sendingNow)return;
   var hasMedia=sendAtts.some(function(a){return a.kind!=='gen'}),isGen=sendAtts.some(function(a){return a.kind==='gen'});
